@@ -194,5 +194,87 @@ export class ApiClient {
             return error.response !== undefined;
         }
     }
+
+    /**
+     * Send a hook event to the API
+     */
+    public async sendHookEvent(eventData: any): Promise<void> {
+        const config = this.configManager.getConfig();
+
+        if (!config.CURSOR_CONNECTION_CODE || !config.EASYITI_API_URL) {
+            throw new Error('API configuration is missing');
+        }
+
+        // Extract base URL (remove /api/chat-summary if present)
+        let baseUrl = config.EASYITI_API_URL;
+        if (baseUrl.includes('/api/chat-summary')) {
+            baseUrl = baseUrl.replace('/api/chat-summary', '');
+        }
+        // Ensure base URL doesn't end with /
+        baseUrl = baseUrl.replace(/\/$/, '');
+        
+        const eventUrl = `${baseUrl}/api/cursor-events`;
+
+        const request = {
+            connectionCode: config.CURSOR_CONNECTION_CODE,
+            ...eventData
+        };
+
+        Logger.log(`📤 Sending hook event to: ${eventUrl}`);
+        
+        try {
+            const response = await this.axiosInstance.post(eventUrl, request);
+            Logger.log(`✅ Hook event sent successfully (Status: ${response.status})`);
+        } catch (error: any) {
+            Logger.error(`❌ Failed to send hook event: ${error.message}`);
+            if (error.response) {
+                Logger.error(`   Status: ${error.response.status}`);
+                Logger.error(`   Response: ${JSON.stringify(error.response.data)}`);
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Retrieve chat sessions for an itinerary
+     */
+    public async getChatSessions(itineraryId: string): Promise<any[]> {
+        const config = this.configManager.getConfig();
+
+        if (!config.CURSOR_CONNECTION_CODE || !config.EASYITI_API_URL) {
+            throw new Error('API configuration is missing');
+        }
+
+        // Extract base URL (remove /api/chat-summary if present)
+        let baseUrl = config.EASYITI_API_URL;
+        if (baseUrl.includes('/api/chat-summary')) {
+            baseUrl = baseUrl.replace('/api/chat-summary', '');
+        }
+        // Ensure base URL doesn't end with /
+        baseUrl = baseUrl.replace(/\/$/, '');
+        
+        const sessionsUrl = `${baseUrl}/api/cursor-chats/${itineraryId}`;
+
+        Logger.log(`📥 Fetching chat sessions from: ${sessionsUrl}`);
+
+        try {
+            const response = await this.axiosInstance.get(sessionsUrl, {
+                params: {
+                    connectionCode: config.CURSOR_CONNECTION_CODE
+                },
+                timeout: 10000
+            });
+
+            Logger.log(`✅ Retrieved ${Array.isArray(response.data) ? response.data.length : 0} chat session(s)`);
+            return Array.isArray(response.data) ? response.data : [];
+        } catch (error: any) {
+            Logger.error(`❌ Failed to retrieve chat sessions: ${error.message}`);
+            if (error.response) {
+                Logger.error(`   Status: ${error.response.status}`);
+                Logger.error(`   Response: ${JSON.stringify(error.response.data)}`);
+            }
+            throw error;
+        }
+    }
 }
 

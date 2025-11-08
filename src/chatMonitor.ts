@@ -152,12 +152,35 @@ export class ChatMonitor {
             fileName.includes('conversation')
         );
 
-        // If it's a markdown file, check content
-        if (document.languageId === 'markdown' && hasChatIndicator) {
-            return this.looksLikeChat(document.getText());
+        // Get document content for content-based detection
+        const content = document.getText();
+        
+        // If path has chat indicators, verify with content check
+        if (hasChatIndicator) {
+            // For markdown files, always check content
+            if (document.languageId === 'markdown') {
+                return this.looksLikeChat(content);
+            }
+            // For other files with chat indicators, check content if available
+            if (content.length > 50) {
+                return this.looksLikeChat(content);
+            }
+            // If content is too short but path matches, assume it's a chat document
+            return true;
         }
 
-        return hasChatIndicator;
+        // If no path indicators, check content for chat-like patterns
+        // This helps catch chat documents that don't follow naming conventions
+        // Only do this for text-based files with substantial content
+        if (content.length > 100) {
+            // Check if it looks like chat content regardless of file type
+            if (this.looksLikeChat(content)) {
+                return true;
+            }
+        }
+
+        // Default: require path indicators
+        return false;
     }
 
     /**
@@ -545,6 +568,89 @@ export class ChatMonitor {
                 Logger.error('ChatMonitor: Auto-send failed', error);
             }
         }
+    }
+
+    /**
+     * Get information about the active chat document
+     */
+    public getActiveChatInfo(): {
+        hasActiveChat: boolean;
+        uri?: string;
+        scheme?: string;
+        languageId?: string;
+        fileName?: string;
+        lineCount?: number;
+        contentLength?: number;
+        isMonitoring?: boolean;
+        detectionMethod?: string;
+    } {
+        // First, check if we have a stored active chat document
+        let doc: vscode.TextDocument | null = this.activeChatDocument;
+        let detectionMethod = 'stored';
+
+        // If no stored document, check the currently active editor
+        if (!doc) {
+            const activeEditor = vscode.window.activeTextEditor;
+            if (activeEditor) {
+                const activeDoc = activeEditor.document;
+                Logger.log(`🔍 Checking active editor:`);
+                Logger.log(`   URI: ${activeDoc.uri.toString()}`);
+                Logger.log(`   Scheme: ${activeDoc.uri.scheme}`);
+                Logger.log(`   Language: ${activeDoc.languageId}`);
+                Logger.log(`   File Name: ${activeDoc.fileName || 'N/A'}`);
+                
+                if (this.isChatDocument(activeDoc)) {
+                    doc = activeDoc;
+                    detectionMethod = 'active-editor';
+                    // Also update the stored active chat document
+                    this.activeChatDocument = doc;
+                    Logger.log(`✅ Active editor detected as chat document`);
+                } else {
+                    Logger.log(`❌ Active editor does not match chat document criteria`);
+                    Logger.log(`   (URI doesn't contain chat indicators and content check failed)`);
+                }
+            } else {
+                Logger.log(`❌ No active editor found`);
+            }
+        }
+
+        // If still no document, check all open documents
+        if (!doc) {
+            Logger.log(`🔍 Checking ${vscode.workspace.textDocuments.length} open documents...`);
+            for (const openDoc of vscode.workspace.textDocuments) {
+                if (this.isChatDocument(openDoc)) {
+                    doc = openDoc;
+                    detectionMethod = 'open-documents';
+                    // Also update the stored active chat document
+                    this.activeChatDocument = doc;
+                    Logger.log(`✅ Found chat document in open documents: ${openDoc.uri.toString()}`);
+                    break;
+                }
+            }
+            if (!doc) {
+                Logger.log(`❌ No chat documents found in open documents`);
+            }
+        }
+
+        if (!doc) {
+            return {
+                hasActiveChat: false,
+                isMonitoring: this.isMonitoring,
+                detectionMethod: 'none'
+            };
+        }
+
+        return {
+            hasActiveChat: true,
+            uri: doc.uri.toString(),
+            scheme: doc.uri.scheme,
+            languageId: doc.languageId,
+            fileName: doc.fileName || path.basename(doc.uri.toString()),
+            lineCount: doc.lineCount,
+            contentLength: doc.getText().length,
+            isMonitoring: this.isMonitoring,
+            detectionMethod: detectionMethod
+        };
     }
 
     public dispose(): void {

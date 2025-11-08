@@ -80,6 +80,36 @@
         "command": "trackchat.testUserPromptCapture",
         "title": "Test User Prompt Capture",
         "category": "TrackChat"
+      },
+      {
+        "command": "trackchat.showActiveChatInfo",
+        "title": "Show Active Chat Tab Info",
+        "category": "TrackChat"
+      },
+      {
+        "command": "trackchat.processHookEvent",
+        "title": "Process Hook Event",
+        "category": "TrackChat"
+      },
+      {
+        "command": "trackchat.getChatSessions",
+        "title": "Get Chat Sessions",
+        "category": "TrackChat"
+      },
+      {
+        "command": "trackchat.showHookStatus",
+        "title": "Show Hook System Status",
+        "category": "TrackChat"
+      },
+      {
+        "command": "trackchat.toggleHookDebug",
+        "title": "Toggle Hook Debug Mode",
+        "category": "TrackChat"
+      },
+      {
+        "command": "trackchat.installHooks",
+        "title": "Install Hook Files to Project",
+        "category": "TrackChat"
       }
     ],
     "views": {

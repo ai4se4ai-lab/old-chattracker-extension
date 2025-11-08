@@ -1,0 +1,20 @@
+{
+  "name": "cursor-chat-hook",
+  "version": "1.0.0",
+  "description": "Hook script for capturing Cursor chat events",
+  "main": "cursor-chat-hook.js",
+  "scripts": {
+    "test": "node cursor-chat-hook.js --event-type beforeSubmitPrompt --prompt 'Test prompt'",
+    "capture-prompt": "node cursor-chat-hook.js --event-type beforeSubmitPrompt",
+    "capture-response": "node cursor-chat-hook.js --event-type afterAgentResponse"
+  },
+  "keywords": [
+    "cursor",
+    "chat",
+    "hook",
+    "trackchat"
+  ],
+  "author": "",
+  "license": "MIT"
+}
+

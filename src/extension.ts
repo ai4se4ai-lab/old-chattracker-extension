@@ -5,15 +5,22 @@ import { ApiClient } from './apiClient';
 import { SummaryPanel } from './summaryPanel';
 import { ChatCapture } from './chatCapture';
 import { ChatMonitor } from './chatMonitor';
+import { CursorHookSystem } from './cursorHookSystem';
+import { HookInstaller } from './hookInstaller';
 import { Logger } from './logger';
 import { testExtraction } from './testExtraction';
 import { testUserPromptCapture } from './testUserPromptCapture';
+import { CursorRawEvent } from './types';
+import * as fs from 'fs';
+import * as path from 'path';
 
 let chatTracker: ChatTracker;
 let configManager: ConfigManager;
 let apiClient: ApiClient;
 let chatCapture: ChatCapture;
 let chatMonitor: ChatMonitor;
+let hookSystem: CursorHookSystem;
+let hookInstaller: HookInstaller;
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize logger first
@@ -28,6 +35,8 @@ export function activate(context: vscode.ExtensionContext) {
     chatCapture = new ChatCapture(chatTracker, configManager);
     const autoSend = configManager.getConfig().autoSend || false;
     chatMonitor = new ChatMonitor(chatTracker, apiClient, autoSend, chatCapture);
+    hookSystem = new CursorHookSystem(context, configManager, apiClient);
+    hookInstaller = new HookInstaller(context);
 
     // Register commands
     const showSummaryCommand = vscode.commands.registerCommand('trackchat.showSummary', () => {
@@ -437,6 +446,333 @@ export function activate(context: vscode.ExtensionContext) {
         await testUserPromptCapture(context, apiClient);
     });
 
+    const showActiveChatInfoCommand = vscode.commands.registerCommand('trackchat.showActiveChatInfo', () => {
+        const chatInfo = chatMonitor.getActiveChatInfo();
+        
+        if (!chatInfo.hasActiveChat) {
+            const monitoringStatus = chatInfo.isMonitoring ? 'Active' : 'Inactive';
+            Logger.log('\n📄 Active Chat Tab Information:');
+            Logger.log('   Status: No active chat tab detected');
+            Logger.log(`   Monitoring: ${monitoringStatus}`);
+            
+            // Show diagnostic information about open documents
+            const openDocs = vscode.workspace.textDocuments;
+            Logger.log(`\n📋 Diagnostic: Found ${openDocs.length} open document(s):`);
+            openDocs.forEach((doc, index) => {
+                Logger.log(`   ${index + 1}. ${doc.fileName || 'Untitled'}`);
+                Logger.log(`      URI: ${doc.uri.toString()}`);
+                Logger.log(`      Scheme: ${doc.uri.scheme}`);
+                Logger.log(`      Language: ${doc.languageId}`);
+                Logger.log(`      Lines: ${doc.lineCount}, Size: ${doc.getText().length} chars`);
+            });
+            
+            const activeEditor = vscode.window.activeTextEditor;
+            if (activeEditor) {
+                Logger.log(`\n📝 Currently Active Editor:`);
+                Logger.log(`   ${activeEditor.document.fileName || 'Untitled'}`);
+                Logger.log(`   URI: ${activeEditor.document.uri.toString()}`);
+                Logger.log(`   Scheme: ${activeEditor.document.uri.scheme}`);
+            } else {
+                Logger.log(`\n📝 No active editor found`);
+            }
+            
+            Logger.log(`\n💡 Note: Cursor's chat interface may be a webview panel, not a regular text document.`);
+            Logger.log(`   If you have a chat open, it might not be accessible as a text document.\n`);
+            
+            const message = `No active chat tab detected. Monitoring: ${monitoringStatus}\n\n` +
+                `Found ${openDocs.length} open document(s). Check the output channel for details.`;
+            
+            vscode.window.showInformationMessage(
+                message,
+                'View Details',
+                'Start Monitoring'
+            ).then(selection => {
+                if (selection === 'View Details') {
+                    Logger.show();
+                } else if (selection === 'Start Monitoring') {
+                    chatMonitor.startMonitoring();
+                }
+            });
+            return;
+        }
+
+        const infoMessage = [
+            '📄 Active Chat Tab Information',
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+            `URI: ${chatInfo.uri}`,
+            `Scheme: ${chatInfo.scheme}`,
+            `Language: ${chatInfo.languageId || 'Unknown'}`,
+            `File Name: ${chatInfo.fileName || 'N/A'}`,
+            `Line Count: ${chatInfo.lineCount?.toLocaleString() || 'N/A'}`,
+            `Content Length: ${chatInfo.contentLength?.toLocaleString() || 'N/A'} characters`,
+            `Monitoring: ${chatInfo.isMonitoring ? 'Active' : 'Inactive'}`,
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+        ].join('\n');
+
+        // Show in an information message (truncated) and also log full details
+        Logger.log('\n📄 Active Chat Tab Information:');
+        Logger.log(`   URI: ${chatInfo.uri}`);
+        Logger.log(`   Scheme: ${chatInfo.scheme}`);
+        Logger.log(`   Language: ${chatInfo.languageId || 'Unknown'}`);
+        Logger.log(`   File Name: ${chatInfo.fileName || 'N/A'}`);
+        Logger.log(`   Line Count: ${chatInfo.lineCount?.toLocaleString() || 'N/A'}`);
+        Logger.log(`   Content Length: ${chatInfo.contentLength?.toLocaleString() || 'N/A'} characters`);
+        Logger.log(`   Monitoring: ${chatInfo.isMonitoring ? 'Active' : 'Inactive'}`);
+        if (chatInfo.detectionMethod) {
+            Logger.log(`   Detection Method: ${chatInfo.detectionMethod}`);
+        }
+        Logger.log('');
+
+        // Show a shorter message in the notification
+        const shortMessage = `Active Chat Tab: ${chatInfo.fileName || 'Unknown'}\n` +
+            `URI: ${chatInfo.uri}\n` +
+            `Lines: ${chatInfo.lineCount?.toLocaleString() || 'N/A'}, ` +
+            `Size: ${chatInfo.contentLength?.toLocaleString() || 'N/A'} chars\n` +
+            `Monitoring: ${chatInfo.isMonitoring ? 'Active' : 'Inactive'}`;
+
+        vscode.window.showInformationMessage(shortMessage, 'View Full Details').then(selection => {
+            if (selection === 'View Full Details') {
+                // Show full details in output channel
+                Logger.show();
+            }
+        });
+    });
+
+    // Hook System Commands
+    const processHookEventCommand = vscode.commands.registerCommand('trackchat.processHookEvent', async () => {
+        const eventJson = await vscode.window.showInputBox({
+            prompt: 'Enter Cursor event JSON',
+            placeHolder: '{"eventType": "beforeSubmitPrompt", "userPrompt": "...", ...}',
+            validateInput: (value) => {
+                try {
+                    JSON.parse(value);
+                    return null;
+                } catch {
+                    return 'Invalid JSON';
+                }
+            }
+        });
+
+        if (eventJson) {
+            try {
+                const event: CursorRawEvent = JSON.parse(eventJson);
+                await hookSystem.processEvent(event);
+                vscode.window.showInformationMessage('Hook event processed successfully!');
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Failed to process event: ${error.message}`);
+            }
+        }
+    });
+
+    const getChatSessionsCommand = vscode.commands.registerCommand('trackchat.getChatSessions', async () => {
+        const itineraryId = await vscode.window.showInputBox({
+            prompt: 'Enter Itinerary ID',
+            placeHolder: 'itinerary-id-here'
+        });
+
+        if (itineraryId) {
+            try {
+                const sessions = await apiClient.getChatSessions(itineraryId);
+                Logger.log(`\n📋 Chat Sessions for Itinerary: ${itineraryId}`);
+                Logger.log(`   Found ${sessions.length} session(s)\n`);
+                
+                sessions.forEach((session, index) => {
+                    Logger.log(`Session ${index + 1}:`);
+                    Logger.log(`   Title: ${session.chatTitle || 'N/A'}`);
+                    Logger.log(`   Status: ${session.status || 'N/A'}`);
+                    Logger.log(`   Prompt: ${(session.userPrompt || '').substring(0, 100)}${(session.userPrompt || '').length > 100 ? '...' : ''}`);
+                    Logger.log(`   Response: ${session.aiResponse ? 'Yes' : 'No'}`);
+                    Logger.log(`   Files: ${Array.isArray(session.affectedFiles) ? session.affectedFiles.length : 0}`);
+                    Logger.log(`   Timestamp: ${session.latestTimestamp || session.promptTimestamp || 'N/A'}`);
+                    Logger.log('');
+                });
+
+                Logger.show();
+                vscode.window.showInformationMessage(`Retrieved ${sessions.length} chat session(s). Check output channel for details.`);
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Failed to retrieve sessions: ${error.message}`);
+                Logger.error(`Failed to retrieve chat sessions: ${error.message}`);
+            }
+        }
+    });
+
+    const showHookStatusCommand = vscode.commands.registerCommand('trackchat.showHookStatus', () => {
+        const pairedEvents = hookSystem.getPairedEvents();
+        const pendingPrompts = hookSystem.getPendingPrompts();
+
+        Logger.log('\n📊 Hook System Status:');
+        Logger.log(`   Paired Events: ${pairedEvents.length}`);
+        Logger.log(`   Pending Prompts: ${pendingPrompts.length}`);
+        Logger.log('');
+
+        if (pendingPrompts.length > 0) {
+            Logger.log('⏳ Pending Prompts:');
+            pendingPrompts.forEach((prompt, index) => {
+                Logger.log(`   ${index + 1}. ${prompt.chatTitle}`);
+                Logger.log(`      Prompt: ${prompt.userPrompt.substring(0, 80)}${prompt.userPrompt.length > 80 ? '...' : ''}`);
+                Logger.log(`      Timestamp: ${prompt.timestamp}`);
+                Logger.log('');
+            });
+        }
+
+        if (pairedEvents.length > 0) {
+            Logger.log('✅ Paired Events:');
+            pairedEvents.slice(-5).forEach((event, index) => {
+                Logger.log(`   ${index + 1}. ${event.chatTitle}`);
+                Logger.log(`      Status: ${event.status}`);
+                Logger.log(`      Has Response: ${event.aiResponse ? 'Yes' : 'No'}`);
+                Logger.log(`      Files: ${event.affectedFiles.length}`);
+                Logger.log('');
+            });
+        }
+
+        Logger.show();
+        vscode.window.showInformationMessage(
+            `Hook System: ${pairedEvents.length} paired, ${pendingPrompts.length} pending`
+        );
+    });
+
+    const toggleHookDebugCommand = vscode.commands.registerCommand('trackchat.toggleHookDebug', () => {
+        const currentDebug = process.env.DEBUG === '1' || process.env.DEBUG === 'true';
+        hookSystem.setDebugMode(!currentDebug);
+        vscode.window.showInformationMessage(
+            `Hook debug mode ${!currentDebug ? 'enabled' : 'disabled'}`
+        );
+    });
+
+    const installHooksCommand = vscode.commands.registerCommand('trackchat.installHooks', async () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        
+        if (!workspaceRoot) {
+            vscode.window.showErrorMessage('No workspace folder found. Please open a workspace first.');
+            return;
+        }
+
+        // Check if hooks are already installed
+        const areInstalled = hookInstaller.areHooksInstalled();
+        let overwrite = false;
+
+        if (areInstalled) {
+            const installedFiles = hookInstaller.getInstalledHooks();
+            const choice = await vscode.window.showWarningMessage(
+                `Hooks are already installed in .hook/ directory (${installedFiles.length} file(s)).\n\n` +
+                `Files: ${installedFiles.slice(0, 5).join(', ')}${installedFiles.length > 5 ? '...' : ''}\n\n` +
+                `Do you want to overwrite existing files?`,
+                { modal: true },
+                'Overwrite',
+                'Cancel'
+            );
+
+            if (choice !== 'Overwrite') {
+                Logger.log('Hook installation cancelled by user');
+                return;
+            }
+
+            overwrite = true;
+        }
+
+        try {
+            Logger.log('\n🚀 Starting hook installation...');
+            Logger.show();
+
+            const result = await hookInstaller.installHooks(overwrite);
+
+            if (result.success) {
+                const message = `✅ Hook installation complete! ${result.filesInstalled} file(s) installed to .hook/ directory.`;
+                Logger.log(`\n${message}`);
+                
+                const action = await vscode.window.showInformationMessage(
+                    message,
+                    'View .hook Directory',
+                    'Run Setup Script',
+                    'View Documentation'
+                );
+
+                if (action === 'View .hook Directory') {
+                    const hookDir = vscode.Uri.file(path.join(workspaceRoot, '.hook'));
+                    await vscode.commands.executeCommand('revealFileInOS', hookDir);
+                } else if (action === 'Run Setup Script') {
+                    // Try to run the setup script
+                    const setupScript = path.join(workspaceRoot, '.hook', 'setup-hook.sh');
+                    if (fs.existsSync(setupScript)) {
+                        const terminal = vscode.window.createTerminal('Hook Setup');
+                        terminal.sendText(`bash "${setupScript}"`);
+                        terminal.show();
+                    } else {
+                        vscode.window.showWarningMessage('Setup script not found. You can run it manually from the terminal.');
+                    }
+                } else if (action === 'View Documentation') {
+                    const readmePath = path.join(workspaceRoot, '.hook', 'README.md');
+                    if (fs.existsSync(readmePath)) {
+                        const doc = await vscode.workspace.openTextDocument(readmePath);
+                        await vscode.window.showTextDocument(doc);
+                    } else {
+                        vscode.window.showWarningMessage('README.md not found in .hook directory.');
+                    }
+                }
+            } else {
+                const errorMessage = `Hook installation completed with errors. ${result.filesInstalled} file(s) installed, ${result.errors.length} error(s).`;
+                Logger.error(`\n${errorMessage}`);
+                Logger.error(`Errors:\n${result.errors.join('\n')}`);
+                
+                vscode.window.showWarningMessage(
+                    errorMessage + ' Check the output channel for details.',
+                    'View Output'
+                ).then(selection => {
+                    if (selection === 'View Output') {
+                        Logger.show();
+                    }
+                });
+            }
+        } catch (error: any) {
+            const errorMessage = `Failed to install hooks: ${error.message}`;
+            Logger.error(errorMessage);
+            vscode.window.showErrorMessage(errorMessage, 'View Output').then(selection => {
+                if (selection === 'View Output') {
+                    Logger.show();
+                }
+            });
+        }
+    });
+
+    // Setup file watcher for hook events (if events are written to a file)
+    const setupHookFileWatcher = () => {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!workspaceRoot) return;
+
+        const hookEventsPath = path.join(workspaceRoot, '.cursor-hooks');
+        if (!fs.existsSync(hookEventsPath)) {
+            try {
+                fs.mkdirSync(hookEventsPath, { recursive: true });
+            } catch (error: any) {
+                Logger.warn(`Could not create hook events directory: ${error.message}`);
+                return;
+            }
+        }
+
+        const watcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(workspaceRoot, '.cursor-hooks/**/*.json')
+        );
+
+        watcher.onDidCreate(async (uri) => {
+            try {
+                const content = fs.readFileSync(uri.fsPath, 'utf8');
+                const event: CursorRawEvent = JSON.parse(content);
+                await hookSystem.processEvent(event);
+                
+                // Optionally delete the file after processing
+                // fs.unlinkSync(uri.fsPath);
+            } catch (error: any) {
+                Logger.error(`Failed to process hook event file ${uri.fsPath}: ${error.message}`);
+            }
+        });
+
+        context.subscriptions.push(watcher);
+        Logger.log('📁 Hook file watcher initialized (watching .cursor-hooks/)');
+    };
+
+    setupHookFileWatcher();
+
     context.subscriptions.push(
         showSummaryCommand,
         sendSummaryCommand,
@@ -450,7 +786,13 @@ export function activate(context: vscode.ExtensionContext) {
         startMonitoringCommand,
         stopMonitoringCommand,
         testExtractionCommand,
-        testUserPromptCaptureCommand
+        testUserPromptCaptureCommand,
+        showActiveChatInfoCommand,
+        processHookEventCommand,
+        getChatSessionsCommand,
+        showHookStatusCommand,
+        toggleHookDebugCommand,
+        installHooksCommand
     );
 
     // Start tracking chat content
@@ -505,6 +847,9 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+    if (hookSystem) {
+        hookSystem.dispose();
+    }
     if (chatMonitor) {
         chatMonitor.dispose();
     }
