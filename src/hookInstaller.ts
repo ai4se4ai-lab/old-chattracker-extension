@@ -114,6 +114,27 @@ export class HookInstaller {
     }
 
     /**
+     * Get instructions for starting auto-detector
+     */
+    public getAutoDetectorInstructions(): string {
+        return `To start automatic chat capture:
+
+1. Start the auto-detector:
+   bash .hook/start-auto-detector.sh
+
+2. Use Cursor chat normally:
+   - Type your prompt
+   - Copy to clipboard (Ctrl+C) before sending
+   - When AI responds, copy response to clipboard
+   - Hook automatically detects and captures both!
+
+3. Stop when done:
+   bash .hook/stop-auto-detector.sh
+
+View logs: tail -f .hook/auto-detector.log`;
+    }
+
+    /**
      * Get list of hook files to copy
      */
     private getHookFiles(hookDir: string): string[] {

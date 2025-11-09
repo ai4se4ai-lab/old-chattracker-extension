@@ -683,24 +683,61 @@ export function activate(context: vscode.ExtensionContext) {
                 
                 const action = await vscode.window.showInformationMessage(
                     message,
+                    'Start Auto-Detector',
                     'View .hook Directory',
-                    'Run Setup Script',
                     'View Documentation'
                 );
 
-                if (action === 'View .hook Directory') {
+                if (action === 'Start Auto-Detector') {
+                    // Choose script based on platform
+                    let startScript: string;
+                    let command: string;
+                    
+                    if (process.platform === 'win32') {
+                        // Windows - try PowerShell first, then batch
+                        const psScript = path.join(workspaceRoot, '.hook', 'start-auto-detector.ps1');
+                        const batScript = path.join(workspaceRoot, '.hook', 'start-auto-detector.bat');
+                        
+                        if (fs.existsSync(psScript)) {
+                            startScript = psScript;
+                            command = `powershell -ExecutionPolicy Bypass -File "${startScript}"`;
+                        } else if (fs.existsSync(batScript)) {
+                            startScript = batScript;
+                            command = `"${startScript}"`;
+                        } else {
+                            // Fallback to bash script if available
+                            startScript = path.join(workspaceRoot, '.hook', 'start-auto-detector.sh');
+                            command = `bash "${startScript}"`;
+                        }
+                    } else {
+                        // Unix-like systems
+                        startScript = path.join(workspaceRoot, '.hook', 'start-auto-detector.sh');
+                        command = `bash "${startScript}"`;
+                    }
+                    
+                    if (fs.existsSync(startScript)) {
+                        const terminal = vscode.window.createTerminal('Hook Auto-Detector');
+                        terminal.sendText(command);
+                        terminal.show();
+                        
+                        vscode.window.showInformationMessage(
+                            'Auto-detector starting! Copy your prompts/responses to clipboard to capture them automatically.',
+                            'View Instructions'
+                        ).then(selection => {
+                            if (selection === 'View Instructions') {
+                                const instructions = hookInstaller.getAutoDetectorInstructions();
+                                Logger.log('\n' + instructions);
+                                Logger.show();
+                            }
+                        });
+                    } else {
+                        vscode.window.showWarningMessage(
+                            'Start script not found. Run manually: bash .hook/start-auto-detector.sh'
+                        );
+                    }
+                } else if (action === 'View .hook Directory') {
                     const hookDir = vscode.Uri.file(path.join(workspaceRoot, '.hook'));
                     await vscode.commands.executeCommand('revealFileInOS', hookDir);
-                } else if (action === 'Run Setup Script') {
-                    // Try to run the setup script
-                    const setupScript = path.join(workspaceRoot, '.hook', 'setup-hook.sh');
-                    if (fs.existsSync(setupScript)) {
-                        const terminal = vscode.window.createTerminal('Hook Setup');
-                        terminal.sendText(`bash "${setupScript}"`);
-                        terminal.show();
-                    } else {
-                        vscode.window.showWarningMessage('Setup script not found. You can run it manually from the terminal.');
-                    }
                 } else if (action === 'View Documentation') {
                     const readmePath = path.join(workspaceRoot, '.hook', 'README.md');
                     if (fs.existsSync(readmePath)) {

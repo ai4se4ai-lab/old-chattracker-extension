@@ -11,6 +11,58 @@ This directory contains hooks for capturing Cursor chat events and sending them 
 
 This will automatically copy all hook files to your project's `.hook/` directory.
 
+## Automatic Chat Detection (Recommended)
+
+**For automatic real-time capture:**
+
+1. **Install hooks** (see above)
+
+2. **Start auto-detector:**
+
+   **Windows (PowerShell):**
+   ```powershell
+   .\.hook\start-auto-detector.ps1
+   ```
+   
+   **Windows (Command Prompt):**
+   ```cmd
+   .hook\start-auto-detector.bat
+   ```
+   
+   **Linux/Mac/Git Bash:**
+   ```bash
+   bash .hook/start-auto-detector.sh
+   ```
+
+3. **That's it!** Now:
+   - Open a chat in Cursor
+   - Type your prompt
+   - Copy it to clipboard (Ctrl+C / Cmd+C) before sending
+   - When AI responds, copy the response to clipboard
+   - The hook automatically detects and captures both!
+
+**Or run directly:**
+```bash
+node .hook/cursor-chat-auto-detector.js
+```
+
+**Stop the detector:**
+
+   **Windows (PowerShell):**
+   ```powershell
+   .\.hook\stop-auto-detector.ps1
+   ```
+   
+   **Windows (Command Prompt):**
+   ```cmd
+   .hook\stop-auto-detector.bat
+   ```
+   
+   **Linux/Mac/Git Bash:**
+   ```bash
+   bash .hook/stop-auto-detector.sh
+   ```
+
 ## Manual Installation
 
 If you prefer to install manually, see the [SETUP.md](./SETUP.md) guide.
